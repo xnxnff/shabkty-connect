@@ -15,6 +15,7 @@ import { Route as PackagesRouteImport } from './routes/packages'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedShabktyControlX9k2RouteImport } from './routes/_authenticated/shabkty-control-x9k2'
 import { Route as AuthenticatedNotificationsRouteImport } from './routes/_authenticated/notifications'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedCheckoutPackageIdRouteImport } from './routes/_authenticated/checkout.$packageId'
@@ -48,6 +49,12 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedShabktyControlX9k2Route =
+  AuthenticatedShabktyControlX9k2RouteImport.update({
+    id: '/shabkty-control-x9k2',
+    path: '/shabkty-control-x9k2',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedNotificationsRoute =
   AuthenticatedNotificationsRouteImport.update({
     id: '/notifications',
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/notifications': typeof AuthenticatedNotificationsRoute
+  '/shabkty-control-x9k2': typeof AuthenticatedShabktyControlX9k2Route
   '/checkout/$packageId': typeof AuthenticatedCheckoutPackageIdRoute
 }
 export interface FileRoutesByTo {
@@ -84,6 +92,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/notifications': typeof AuthenticatedNotificationsRoute
+  '/shabkty-control-x9k2': typeof AuthenticatedShabktyControlX9k2Route
   '/checkout/$packageId': typeof AuthenticatedCheckoutPackageIdRoute
 }
 export interface FileRoutesById {
@@ -96,6 +105,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/notifications': typeof AuthenticatedNotificationsRoute
+  '/_authenticated/shabkty-control-x9k2': typeof AuthenticatedShabktyControlX9k2Route
   '/_authenticated/checkout/$packageId': typeof AuthenticatedCheckoutPackageIdRoute
 }
 export interface FileRouteTypes {
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/dashboard'
     | '/notifications'
+    | '/shabkty-control-x9k2'
     | '/checkout/$packageId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/dashboard'
     | '/notifications'
+    | '/shabkty-control-x9k2'
     | '/checkout/$packageId'
   id:
     | '__root__'
@@ -129,6 +141,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/_authenticated/dashboard'
     | '/_authenticated/notifications'
+    | '/_authenticated/shabkty-control-x9k2'
     | '/_authenticated/checkout/$packageId'
   fileRoutesById: FileRoutesById
 }
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/shabkty-control-x9k2': {
+      id: '/_authenticated/shabkty-control-x9k2'
+      path: '/shabkty-control-x9k2'
+      fullPath: '/shabkty-control-x9k2'
+      preLoaderRoute: typeof AuthenticatedShabktyControlX9k2RouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/notifications': {
       id: '/_authenticated/notifications'
       path: '/notifications'
@@ -212,12 +232,14 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedNotificationsRoute: typeof AuthenticatedNotificationsRoute
+  AuthenticatedShabktyControlX9k2Route: typeof AuthenticatedShabktyControlX9k2Route
   AuthenticatedCheckoutPackageIdRoute: typeof AuthenticatedCheckoutPackageIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedNotificationsRoute: AuthenticatedNotificationsRoute,
+  AuthenticatedShabktyControlX9k2Route: AuthenticatedShabktyControlX9k2Route,
   AuthenticatedCheckoutPackageIdRoute: AuthenticatedCheckoutPackageIdRoute,
 }
 
