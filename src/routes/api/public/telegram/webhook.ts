@@ -75,24 +75,50 @@ async function setState(userId: number, chatId: number, state: any) {
 const clearState = (u: number, c: number) => setState(u, c, {});
 
 // ============ UI ============
-const MAIN_MENU = {
-  reply_markup: {
-    keyboard: [
-      [{ text: '🛍 الباقات' }],
-      [{ text: '📦 طلباتي' }, { text: '🆘 الدعم' }],
-    ],
-    resize_keyboard: true,
-  },
-};
+function mainMenu(userId: number) {
+  const rows: any[][] = [
+    [{ text: '🛍 الباقات' }],
+    [{ text: '📦 طلباتي' }, { text: '🆘 الدعم' }],
+  ];
+  if (userId === ADMIN()) rows.push([{ text: '👑 لوحة الأدمن' }]);
+  return { reply_markup: { keyboard: rows, resize_keyboard: true } };
+}
 
-async function showMain(chatId: number, name?: string) {
+async function showMain(chatId: number, userId: number, name?: string) {
   const greet = name ? `أهلاً <b>${esc(name)}</b>` : 'أهلاً بك';
   await sendMessage(
     chatId,
     `${greet} في <b>متجر شبكتي 🌐</b>\n\nأفضل باقات الـ VPN بأسعار منافسة.\nاختر من القائمة بالأسفل:`,
-    MAIN_MENU,
+    mainMenu(userId),
   );
 }
+
+async function showAdminPanel(chatId: number) {
+  const [{ count: pend }, { count: pkgC }, { count: usersC }] = await Promise.all([
+    sb().from('orders').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    sb().from('packages').select('*', { count: 'exact', head: true }),
+    sb().from('telegram_sessions').select('*', { count: 'exact', head: true }),
+  ]);
+  await sendMessage(
+    chatId,
+    `👑 <b>لوحة الأدمن</b>\n\n` +
+      `⏳ طلبات قيد المراجعة: <b>${pend || 0}</b>\n` +
+      `📦 الباقات: <b>${pkgC || 0}</b>\n` +
+      `👥 المستخدمون: <b>${usersC || 0}</b>\n`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📦 إدارة الباقات', callback_data: 'a:pkgs' }],
+          [{ text: '⏳ الطلبات المعلقة', callback_data: 'a:pending' }],
+          [{ text: '👥 المستخدمون', callback_data: 'a:users' }],
+          [{ text: '📢 إرسال إعلان', callback_data: 'a:bcast' }],
+          [{ text: '📊 إحصائيات', callback_data: 'a:stats' }],
+        ],
+      },
+    },
+  );
+}
+
 
 async function showPackages(chatId: number) {
   const { data: pkgs } = await sb()
@@ -229,10 +255,15 @@ async function handleText(msg: any) {
     }
   }
 
+  // ===== Admin multi-step flows =====
+  if (userId === ADMIN() && state.step && String(state.step).startsWith('a_')) {
+    return handleAdminText(chatId, userId, text, state);
+  }
+
   // ===== Main commands / keyboard =====
   if (text === '/start' || text === '/menu') {
     await clearState(userId, chatId);
-    await showMain(chatId, msg.from.first_name);
+    await showMain(chatId, userId, msg.from.first_name);
     return;
   }
   if (text === '🛍 الباقات' || text === '/packages') return showPackages(chatId);
@@ -244,16 +275,8 @@ async function handleText(msg: any) {
     );
     return;
   }
-  if (userId === ADMIN() && text === '/admin') {
-    const { count: pend } = await sb()
-      .from('orders')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
-    await sendMessage(
-      chatId,
-      `👑 <b>لوحة الأدمن</b>\n\n⏳ طلبات قيد المراجعة: <b>${pend || 0}</b>\n\nستصلك إشعارات تلقائية بكل طلب جديد.`,
-    );
-    return;
+  if (userId === ADMIN() && (text === '/admin' || text === '👑 لوحة الأدمن')) {
+    return showAdminPanel(chatId);
   }
 
   // ===== Order flow =====
@@ -274,8 +297,9 @@ async function handleText(msg: any) {
     return;
   }
 
-  await showMain(chatId, msg.from.first_name);
+  await showMain(chatId, userId, msg.from.first_name);
 }
+
 
 async function handlePhoto(msg: any) {
   const userId = msg.from.id;
@@ -338,7 +362,7 @@ async function handlePhoto(msg: any) {
     `✅ <b>تم استلام طلبك بنجاح!</b>\n\n` +
       `🔖 كود التحقق:\n<code>${code}</code>\n\n` +
       `⏳ سيقوم الفريق بمراجعة الدفع وتفعيل اشتراكك خلال دقائق.\nستصلك رسالة فور التفعيل.`,
-    MAIN_MENU,
+    mainMenu(userId),
   );
 
   // Notify admin
@@ -390,10 +414,7 @@ async function handleCallback(cb: any) {
   if (data.startsWith('appr:')) {
     const orderId = data.slice(5);
     await setState(userId, chatId, { step: 'admin_await_code', order_id: orderId });
-    await sendMessage(
-      chatId,
-      '✏️ أرسل الآن <b>كود الاشتراك (VPN)</b> الذي سيُسلَّم للزبون:',
-    );
+    await sendMessage(chatId, '✏️ أرسل الآن <b>كود الاشتراك (VPN)</b> الذي سيُسلَّم للزبون:');
     return;
   }
   if (data.startsWith('rej:')) {
@@ -402,7 +423,313 @@ async function handleCallback(cb: any) {
     await sendMessage(chatId, '✏️ أرسل <b>سبب الرفض</b>:');
     return;
   }
+
+  // Admin menu actions
+  if (data === 'a:home') return showAdminPanel(chatId);
+  if (data === 'a:pkgs') return adminListPackages(chatId);
+  if (data === 'a:pending') return adminPendingOrders(chatId);
+  if (data === 'a:users') return adminListUsers(chatId);
+  if (data === 'a:stats') return adminStats(chatId);
+  if (data === 'a:bcast') {
+    await setState(userId, chatId, { step: 'a_bcast_text' });
+    await sendMessage(chatId, '📢 أرسل نص الإعلان الذي تريد بثّه لجميع المستخدمين:');
+    return;
+  }
+  if (data === 'pkg:new') {
+    await setState(userId, chatId, { step: 'a_pkg_name', draft: {} });
+    await sendMessage(chatId, '➕ <b>باقة جديدة</b>\n\nأرسل <b>اسم الباقة</b>:');
+    return;
+  }
+  if (data.startsWith('pkg:v:')) {
+    return adminViewPackage(chatId, data.slice(6));
+  }
+  if (data.startsWith('pkg:toggle:')) {
+    const id = data.slice(11);
+    const { data: cur } = await sb().from('packages').select('is_active').eq('id', id).maybeSingle();
+    await sb().from('packages').update({ is_active: !(cur as any)?.is_active }).eq('id', id);
+    return adminViewPackage(chatId, id);
+  }
+  if (data.startsWith('pkg:del:')) {
+    const id = data.slice(8);
+    await sb().from('packages').delete().eq('id', id);
+    await sendMessage(chatId, '🗑 تم حذف الباقة.');
+    return adminListPackages(chatId);
+  }
+  if (data.startsWith('pkg:edit:')) {
+    const [, , , field, id] = data.split(':');
+    await setState(userId, chatId, { step: `a_pkg_edit_${field}`, edit_id: id });
+    const labels: any = { name: 'الاسم', desc: 'الوصف', price: 'السعر (د.ع)', dur: 'المدة (أيام)', img: 'رابط الصورة' };
+    await sendMessage(chatId, `✏️ أرسل القيمة الجديدة لـ <b>${labels[field]}</b>:`);
+    return;
+  }
+  if (data === 'a:bcast:send') {
+    return adminSendBroadcast(chatId, userId);
+  }
+  if (data === 'a:bcast:cancel') {
+    await clearState(userId, chatId);
+    await sendMessage(chatId, '✖️ تم الإلغاء.');
+    return showAdminPanel(chatId);
+  }
 }
+
+// ============ Admin helpers ============
+async function adminListPackages(chatId: number) {
+  const { data: pkgs } = await sb().from('packages').select('*').order('sort_order', { ascending: true });
+  const list = (pkgs || []) as any[];
+  const buttons: any[][] = list.map((p) => [
+    { text: `${p.is_active ? '🟢' : '⚪️'} ${p.name} — ${fmtIQD(p.price_iqd)}`, callback_data: `pkg:v:${p.id}` },
+  ]);
+  buttons.push([{ text: '➕ إضافة باقة', callback_data: 'pkg:new' }]);
+  buttons.push([{ text: '⬅️ رجوع', callback_data: 'a:home' }]);
+  await sendMessage(chatId, `📦 <b>إدارة الباقات (${list.length})</b>`, {
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+async function adminViewPackage(chatId: number, id: string) {
+  const { data: p } = await sb().from('packages').select('*').eq('id', id).maybeSingle();
+  if (!p) {
+    await sendMessage(chatId, 'الباقة غير موجودة.');
+    return;
+  }
+  const pkg: any = p;
+  const body =
+    `📦 <b>${esc(pkg.name)}</b>\n` +
+    `الحالة: ${pkg.is_active ? '🟢 مفعّلة' : '⚪️ متوقفة'}\n` +
+    `💰 ${fmtIQD(pkg.price_iqd)}\n` +
+    `📅 ${pkg.duration_days} يوم\n` +
+    (pkg.description ? `📝 ${esc(pkg.description)}\n` : '') +
+    (pkg.image_url ? `🖼 ${esc(pkg.image_url)}\n` : '');
+  await sendMessage(chatId, body, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '✏️ الاسم', callback_data: `pkg:edit:f:name:${id}` },
+          { text: '💰 السعر', callback_data: `pkg:edit:f:price:${id}` },
+        ],
+        [
+          { text: '📅 المدة', callback_data: `pkg:edit:f:dur:${id}` },
+          { text: '📝 الوصف', callback_data: `pkg:edit:f:desc:${id}` },
+        ],
+        [{ text: '🖼 الصورة', callback_data: `pkg:edit:f:img:${id}` }],
+        [{ text: pkg.is_active ? '⏸ إيقاف' : '▶️ تفعيل', callback_data: `pkg:toggle:${id}` }],
+        [{ text: '🗑 حذف', callback_data: `pkg:del:${id}` }],
+        [{ text: '⬅️ رجوع', callback_data: 'a:pkgs' }],
+      ],
+    },
+  });
+}
+
+async function adminPendingOrders(chatId: number) {
+  const { data: orders } = await sb()
+    .from('orders')
+    .select('*, packages(name, price_iqd)')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  const list = (orders || []) as any[];
+  if (list.length === 0) {
+    await sendMessage(chatId, '✅ لا توجد طلبات معلقة.');
+    return;
+  }
+  await sendMessage(chatId, `⏳ <b>طلبات معلقة (${list.length})</b>`);
+  for (const o of list) {
+    const body =
+      `👤 ${esc(o.full_name)}\n📦 ${esc(o.packages?.name || '')}\n💰 ${fmtIQD(o.packages?.price_iqd || 0)}\n🔖 <code>${o.verification_code}</code>`;
+    await sendMessage(chatId, body, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ قبول', callback_data: `appr:${o.id}` },
+            { text: '❌ رفض', callback_data: `rej:${o.id}` },
+          ],
+        ],
+      },
+    });
+  }
+}
+
+async function adminListUsers(chatId: number) {
+  const { data: sess } = await sb()
+    .from('telegram_sessions')
+    .select('telegram_user_id, chat_id, updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(30);
+  const list = (sess || []) as any[];
+  if (list.length === 0) {
+    await sendMessage(chatId, 'لا يوجد مستخدمون بعد.');
+    return;
+  }
+  const lines = list.map(
+    (u, i) => `${i + 1}. <code>${u.telegram_user_id}</code> — ${new Date(u.updated_at).toLocaleDateString('ar-IQ')}`,
+  );
+  await sendMessage(chatId, `👥 <b>آخر ${list.length} مستخدم</b>\n\n${lines.join('\n')}`, {
+    reply_markup: { inline_keyboard: [[{ text: '⬅️ رجوع', callback_data: 'a:home' }]] },
+  });
+}
+
+async function adminStats(chatId: number) {
+  const [pend, appr, rej, total, users, pkgs] = await Promise.all([
+    sb().from('orders').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    sb().from('orders').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
+    sb().from('orders').select('*', { count: 'exact', head: true }).eq('status', 'rejected'),
+    sb().from('orders').select('*', { count: 'exact', head: true }),
+    sb().from('telegram_sessions').select('*', { count: 'exact', head: true }),
+    sb().from('packages').select('*', { count: 'exact', head: true }),
+  ]);
+  // Revenue from approved orders
+  const { data: appData } = await sb()
+    .from('orders')
+    .select('packages(price_iqd)')
+    .eq('status', 'approved');
+  const revenue = ((appData || []) as any[]).reduce(
+    (s, o) => s + (o.packages?.price_iqd || 0),
+    0,
+  );
+  await sendMessage(
+    chatId,
+    `📊 <b>الإحصائيات</b>\n\n` +
+      `📦 الباقات: <b>${pkgs.count || 0}</b>\n` +
+      `👥 المستخدمون: <b>${users.count || 0}</b>\n\n` +
+      `📥 إجمالي الطلبات: <b>${total.count || 0}</b>\n` +
+      `⏳ معلّقة: <b>${pend.count || 0}</b>\n` +
+      `✅ مفعّلة: <b>${appr.count || 0}</b>\n` +
+      `❌ مرفوضة: <b>${rej.count || 0}</b>\n\n` +
+      `💰 إجمالي الإيرادات: <b>${fmtIQD(revenue)}</b>`,
+    { reply_markup: { inline_keyboard: [[{ text: '⬅️ رجوع', callback_data: 'a:home' }]] } },
+  );
+}
+
+async function adminSendBroadcast(chatId: number, userId: number) {
+  const state = await getState(userId);
+  if (!state.bcast_text) {
+    await sendMessage(chatId, 'لا يوجد نص إعلان.');
+    return;
+  }
+  const { data: sess } = await sb().from('telegram_sessions').select('chat_id');
+  const targets = (sess || []) as any[];
+  let ok = 0;
+  let fail = 0;
+  for (const t of targets) {
+    try {
+      await sendMessage(Number(t.chat_id), `📢 <b>إعلان</b>\n\n${esc(state.bcast_text)}`);
+      ok++;
+    } catch {
+      fail++;
+    }
+  }
+  await clearState(userId, chatId);
+  await sendMessage(chatId, `✅ تم البث.\nنجح: <b>${ok}</b>\nفشل: <b>${fail}</b>`);
+  return showAdminPanel(chatId);
+}
+
+async function handleAdminText(chatId: number, userId: number, text: string, state: any) {
+  // Broadcast
+  if (state.step === 'a_bcast_text') {
+    await setState(userId, chatId, { step: 'a_bcast_confirm', bcast_text: text });
+    const { count } = await sb().from('telegram_sessions').select('*', { count: 'exact', head: true });
+    await sendMessage(
+      chatId,
+      `🔎 <b>معاينة الإعلان:</b>\n\n${esc(text)}\n\nسيُرسل إلى <b>${count || 0}</b> مستخدم.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ إرسال', callback_data: 'a:bcast:send' },
+              { text: '✖️ إلغاء', callback_data: 'a:bcast:cancel' },
+            ],
+          ],
+        },
+      },
+    );
+    return;
+  }
+
+  // New package wizard
+  if (state.step === 'a_pkg_name') {
+    await setState(userId, chatId, { step: 'a_pkg_desc', draft: { ...state.draft, name: text } });
+    await sendMessage(chatId, '📝 أرسل <b>وصف الباقة</b> (أو اكتب - للتخطي):');
+    return;
+  }
+  if (state.step === 'a_pkg_desc') {
+    const description = text === '-' ? null : text;
+    await setState(userId, chatId, { step: 'a_pkg_price', draft: { ...state.draft, description } });
+    await sendMessage(chatId, '💰 أرسل <b>السعر بالدينار</b> (أرقام فقط):');
+    return;
+  }
+  if (state.step === 'a_pkg_price') {
+    const price = parseInt(text.replace(/\D/g, ''), 10);
+    if (!price || price <= 0) {
+      await sendMessage(chatId, '⚠️ سعر غير صحيح. أعد الإرسال:');
+      return;
+    }
+    await setState(userId, chatId, { step: 'a_pkg_dur', draft: { ...state.draft, price_iqd: price } });
+    await sendMessage(chatId, '📅 أرسل <b>مدة الاشتراك بالأيام</b>:');
+    return;
+  }
+  if (state.step === 'a_pkg_dur') {
+    const dur = parseInt(text.replace(/\D/g, ''), 10);
+    if (!dur || dur <= 0) {
+      await sendMessage(chatId, '⚠️ مدة غير صحيحة. أعد الإرسال:');
+      return;
+    }
+    await setState(userId, chatId, {
+      step: 'a_pkg_img',
+      draft: { ...state.draft, duration_days: dur },
+    });
+    await sendMessage(chatId, '🖼 أرسل <b>رابط صورة الباقة</b> (أو - للتخطي):');
+    return;
+  }
+  if (state.step === 'a_pkg_img') {
+    const image_url = text === '-' ? null : text;
+    const draft = { ...state.draft, image_url, is_active: true };
+    const { error } = await sb().from('packages').insert(draft);
+    await clearState(userId, chatId);
+    if (error) {
+      await sendMessage(chatId, '⚠️ فشل إنشاء الباقة: ' + error.message);
+      return;
+    }
+    await sendMessage(chatId, `✅ تم إنشاء الباقة <b>${esc(draft.name)}</b>.`);
+    return adminListPackages(chatId);
+  }
+
+  // Edit single field
+  const editMatch = state.step?.match(/^a_pkg_edit_(name|desc|price|dur|img)$/);
+  if (editMatch) {
+    const field = editMatch[1];
+    const id = state.edit_id;
+    const patch: any = {};
+    if (field === 'name') patch.name = text;
+    else if (field === 'desc') patch.description = text === '-' ? null : text;
+    else if (field === 'img') patch.image_url = text === '-' ? null : text;
+    else if (field === 'price') {
+      const v = parseInt(text.replace(/\D/g, ''), 10);
+      if (!v) {
+        await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
+        return;
+      }
+      patch.price_iqd = v;
+    } else if (field === 'dur') {
+      const v = parseInt(text.replace(/\D/g, ''), 10);
+      if (!v) {
+        await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
+        return;
+      }
+      patch.duration_days = v;
+    }
+    const { error } = await sb().from('packages').update(patch).eq('id', id);
+    await clearState(userId, chatId);
+    if (error) {
+      await sendMessage(chatId, '⚠️ فشل التعديل: ' + error.message);
+      return;
+    }
+    await sendMessage(chatId, '✅ تم التحديث.');
+    return adminViewPackage(chatId, id);
+  }
+
+  await sendMessage(chatId, 'أمر غير معروف. /admin للعودة للوحة.');
+}
+
 
 // ============ Route ============
 export const Route = createFileRoute('/api/public/telegram/webhook')({
