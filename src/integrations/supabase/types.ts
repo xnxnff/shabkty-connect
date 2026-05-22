@@ -77,7 +77,9 @@ export type Database = {
           package_id: string
           payment_screenshot_url: string
           status: Database["public"]["Enums"]["order_status"]
-          user_id: string
+          telegram_chat_id: number | null
+          telegram_user_id: number | null
+          user_id: string | null
           verification_code: string
         }
         Insert: {
@@ -91,7 +93,9 @@ export type Database = {
           package_id: string
           payment_screenshot_url: string
           status?: Database["public"]["Enums"]["order_status"]
-          user_id: string
+          telegram_chat_id?: number | null
+          telegram_user_id?: number | null
+          user_id?: string | null
           verification_code: string
         }
         Update: {
@@ -105,7 +109,9 @@ export type Database = {
           package_id?: string
           payment_screenshot_url?: string
           status?: Database["public"]["Enums"]["order_status"]
-          user_id?: string
+          telegram_chat_id?: number | null
+          telegram_user_id?: number | null
+          user_id?: string | null
           verification_code?: string
         }
         Relationships: [
@@ -210,6 +216,27 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+        }
+        Relationships: []
+      }
+      telegram_sessions: {
+        Row: {
+          chat_id: number
+          state: Json
+          telegram_user_id: number
+          updated_at: string
+        }
+        Insert: {
+          chat_id: number
+          state?: Json
+          telegram_user_id: number
+          updated_at?: string
+        }
+        Update: {
+          chat_id?: number
+          state?: Json
+          telegram_user_id?: number
+          updated_at?: string
         }
         Relationships: []
       }
