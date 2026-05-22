@@ -75,24 +75,50 @@ async function setState(userId: number, chatId: number, state: any) {
 const clearState = (u: number, c: number) => setState(u, c, {});
 
 // ============ UI ============
-const MAIN_MENU = {
-  reply_markup: {
-    keyboard: [
-      [{ text: '🛍 الباقات' }],
-      [{ text: '📦 طلباتي' }, { text: '🆘 الدعم' }],
-    ],
-    resize_keyboard: true,
-  },
-};
+function mainMenu(userId: number) {
+  const rows: any[][] = [
+    [{ text: '🛍 الباقات' }],
+    [{ text: '📦 طلباتي' }, { text: '🆘 الدعم' }],
+  ];
+  if (userId === ADMIN()) rows.push([{ text: '👑 لوحة الأدمن' }]);
+  return { reply_markup: { keyboard: rows, resize_keyboard: true } };
+}
 
-async function showMain(chatId: number, name?: string) {
+async function showMain(chatId: number, userId: number, name?: string) {
   const greet = name ? `أهلاً <b>${esc(name)}</b>` : 'أهلاً بك';
   await sendMessage(
     chatId,
     `${greet} في <b>متجر شبكتي 🌐</b>\n\nأفضل باقات الـ VPN بأسعار منافسة.\nاختر من القائمة بالأسفل:`,
-    MAIN_MENU,
+    mainMenu(userId),
   );
 }
+
+async function showAdminPanel(chatId: number) {
+  const [{ count: pend }, { count: pkgC }, { count: usersC }] = await Promise.all([
+    sb().from('orders').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    sb().from('packages').select('*', { count: 'exact', head: true }),
+    sb().from('telegram_sessions').select('*', { count: 'exact', head: true }),
+  ]);
+  await sendMessage(
+    chatId,
+    `👑 <b>لوحة الأدمن</b>\n\n` +
+      `⏳ طلبات قيد المراجعة: <b>${pend || 0}</b>\n` +
+      `📦 الباقات: <b>${pkgC || 0}</b>\n` +
+      `👥 المستخدمون: <b>${usersC || 0}</b>\n`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📦 إدارة الباقات', callback_data: 'a:pkgs' }],
+          [{ text: '⏳ الطلبات المعلقة', callback_data: 'a:pending' }],
+          [{ text: '👥 المستخدمون', callback_data: 'a:users' }],
+          [{ text: '📢 إرسال إعلان', callback_data: 'a:bcast' }],
+          [{ text: '📊 إحصائيات', callback_data: 'a:stats' }],
+        ],
+      },
+    },
+  );
+}
+
 
 async function showPackages(chatId: number) {
   const { data: pkgs } = await sb()
