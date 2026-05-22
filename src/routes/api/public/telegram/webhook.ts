@@ -255,10 +255,15 @@ async function handleText(msg: any) {
     }
   }
 
+  // ===== Admin multi-step flows =====
+  if (userId === ADMIN() && state.step && String(state.step).startsWith('a_')) {
+    return handleAdminText(chatId, userId, text, state);
+  }
+
   // ===== Main commands / keyboard =====
   if (text === '/start' || text === '/menu') {
     await clearState(userId, chatId);
-    await showMain(chatId, msg.from.first_name);
+    await showMain(chatId, userId, msg.from.first_name);
     return;
   }
   if (text === '🛍 الباقات' || text === '/packages') return showPackages(chatId);
@@ -270,16 +275,8 @@ async function handleText(msg: any) {
     );
     return;
   }
-  if (userId === ADMIN() && text === '/admin') {
-    const { count: pend } = await sb()
-      .from('orders')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
-    await sendMessage(
-      chatId,
-      `👑 <b>لوحة الأدمن</b>\n\n⏳ طلبات قيد المراجعة: <b>${pend || 0}</b>\n\nستصلك إشعارات تلقائية بكل طلب جديد.`,
-    );
-    return;
+  if (userId === ADMIN() && (text === '/admin' || text === '👑 لوحة الأدمن')) {
+    return showAdminPanel(chatId);
   }
 
   // ===== Order flow =====
@@ -300,8 +297,9 @@ async function handleText(msg: any) {
     return;
   }
 
-  await showMain(chatId, msg.from.first_name);
+  await showMain(chatId, userId, msg.from.first_name);
 }
+
 
 async function handlePhoto(msg: any) {
   const userId = msg.from.id;
