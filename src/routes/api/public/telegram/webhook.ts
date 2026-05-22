@@ -362,7 +362,7 @@ async function handlePhoto(msg: any) {
     `✅ <b>تم استلام طلبك بنجاح!</b>\n\n` +
       `🔖 كود التحقق:\n<code>${code}</code>\n\n` +
       `⏳ سيقوم الفريق بمراجعة الدفع وتفعيل اشتراكك خلال دقائق.\nستصلك رسالة فور التفعيل.`,
-    MAIN_MENU,
+    mainMenu(userId),
   );
 
   // Notify admin
