@@ -15,7 +15,7 @@ function safeEqual(a: string, b: string) {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 function esc(s: string) {
-  return String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!));
+  return String(s ?? '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!));
 }
 function fmtIQD(n: number) {
   return new Intl.NumberFormat('ar-IQ').format(n) + ' د.ع';
@@ -23,6 +23,9 @@ function fmtIQD(n: number) {
 function genCode() {
   const p = () => Math.floor(1000 + Math.random() * 9000).toString();
   return `SHB-${p()}-${p()}`;
+}
+function genRef() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
 let _sb: any = null;
@@ -37,6 +40,20 @@ function sb(): any {
 
 const BOT = () => process.env.TELEGRAM_BOT_TOKEN!;
 const ADMIN = () => Number(process.env.TELEGRAM_ADMIN_CHAT_ID!);
+
+// Settings cache
+const _settings: Record<string, string> = {};
+async function getSetting(key: string, fallback = ''): Promise<string> {
+  if (_settings[key] !== undefined) return _settings[key];
+  const { data } = await sb().from('bot_settings').select('value').eq('key', key).maybeSingle();
+  const v = (data as any)?.value ?? fallback;
+  _settings[key] = v;
+  return v;
+}
+async function setSetting(key: string, value: string) {
+  await sb().from('bot_settings').upsert({ key, value, updated_at: new Date().toISOString() });
+  _settings[key] = value;
+}
 
 async function tg(method: string, body: any) {
   const r = await fetch(`https://api.telegram.org/bot${BOT()}/${method}`, {
@@ -74,11 +91,84 @@ async function setState(userId: number, chatId: number, state: any) {
 }
 const clearState = (u: number, c: number) => setState(u, c, {});
 
+// ============ Points / referrals ============
+async function getOrCreatePoints(userId: number): Promise<any> {
+  const { data } = await sb()
+    .from('user_points')
+    .select('*')
+    .eq('telegram_user_id', userId)
+    .maybeSingle();
+  if (data) return data;
+  let code = genRef();
+  // ensure uniqueness
+  for (let i = 0; i < 5; i++) {
+    const { data: ex } = await sb()
+      .from('user_points')
+      .select('telegram_user_id')
+      .eq('referral_code', code)
+      .maybeSingle();
+    if (!ex) break;
+    code = genRef();
+  }
+  const { data: ins } = await sb()
+    .from('user_points')
+    .insert({ telegram_user_id: userId, referral_code: code, points: 0 })
+    .select()
+    .single();
+  return ins;
+}
+async function applyReferral(newUserId: number, refCode: string) {
+  const me = await getOrCreatePoints(newUserId);
+  if ((me as any).referred_by) return; // already referred
+  const { data: ref } = await sb()
+    .from('user_points')
+    .select('telegram_user_id')
+    .eq('referral_code', refCode.toUpperCase())
+    .maybeSingle();
+  if (!ref || (ref as any).telegram_user_id === newUserId) return;
+  const refUid = Number((ref as any).telegram_user_id);
+  const ppr = parseInt(await getSetting('points_per_referral', '10'), 10) || 0;
+  await sb()
+    .from('user_points')
+    .update({ referred_by: refUid })
+    .eq('telegram_user_id', newUserId);
+  // increment referrer points
+  const { data: r } = await sb()
+    .from('user_points')
+    .select('points')
+    .eq('telegram_user_id', refUid)
+    .maybeSingle();
+  const newPts = ((r as any)?.points || 0) + ppr;
+  await sb().from('user_points').update({ points: newPts }).eq('telegram_user_id', refUid);
+  // notify referrer
+  const { data: sess } = await sb()
+    .from('telegram_sessions')
+    .select('chat_id')
+    .eq('telegram_user_id', refUid)
+    .maybeSingle();
+  if (sess) {
+    await sendMessage(
+      Number((sess as any).chat_id),
+      `🎉 صديق جديد انضمّ عبر رابطك! حصلت على <b>+${ppr}</b> نقطة.`,
+    );
+  }
+}
+
+async function getBotUsername(): Promise<string> {
+  let u = _settings['__bot_username'];
+  if (u) return u;
+  const r: any = await tg('getMe', {});
+  u = r?.result?.username || '';
+  _settings['__bot_username'] = u;
+  return u;
+}
+
 // ============ UI ============
 function mainMenu(userId: number) {
   const rows: any[][] = [
     [{ text: '🛍 الباقات' }],
     [{ text: '📦 طلباتي' }, { text: '🆘 الدعم' }],
+    [{ text: '🎁 نقاطي' }, { text: '❓ كيف أستخدم الكود' }],
   ];
   if (userId === ADMIN()) rows.push([{ text: '👑 لوحة الأدمن' }]);
   return { reply_markup: { keyboard: rows, resize_keyboard: true } };
@@ -112,6 +202,8 @@ async function showAdminPanel(chatId: number) {
           [{ text: '⏳ الطلبات المعلقة', callback_data: 'a:pending' }],
           [{ text: '👥 المستخدمون', callback_data: 'a:users' }],
           [{ text: '📢 إرسال إعلان', callback_data: 'a:bcast' }],
+          [{ text: '🎁 إدارة النقاط', callback_data: 'a:points' }],
+          [{ text: '⚙️ الإعدادات', callback_data: 'a:settings' }],
           [{ text: '📊 إحصائيات', callback_data: 'a:stats' }],
         ],
       },
@@ -161,17 +253,20 @@ async function showMyOrders(userId: number, chatId: number) {
   }
   await sendMessage(chatId, `<b>📦 طلباتك (${list.length})</b>`);
   for (const o of list) {
+    // If the code was delivered, treat as approved even if status lagged
+    const effective = o.delivered_code ? 'approved' : o.status;
     const stMap: any = {
       pending: '⏳ قيد المراجعة',
       approved: '✅ مفعّل',
       rejected: '❌ مرفوض',
+      expired: '⌛️ منتهٍ',
     };
     let body =
       `📦 <b>${esc(o.packages?.name || '')}</b>\n` +
-      `الحالة: ${stMap[o.status] || o.status}\n` +
+      `الحالة: ${stMap[effective] || effective}\n` +
       `🔖 كود التحقق: <code>${esc(o.verification_code)}</code>\n` +
       `📆 ${new Date(o.created_at).toLocaleString('ar-IQ')}`;
-    if (o.status === 'approved' && o.delivered_code) {
+    if (o.delivered_code) {
       body += `\n\n🔑 <b>كود الاشتراك:</b>\n<code>${esc(o.delivered_code)}</code>`;
       if (o.expires_at)
         body += `\n📅 ينتهي: ${new Date(o.expires_at).toLocaleDateString('ar-IQ')}`;
@@ -181,6 +276,33 @@ async function showMyOrders(userId: number, chatId: number) {
     }
     await sendMessage(chatId, body);
   }
+}
+
+async function showPoints(userId: number, chatId: number) {
+  const p = await getOrCreatePoints(userId);
+  const username = await getBotUsername();
+  const ppr = await getSetting('points_per_referral', '10');
+  const link = username ? `https://t.me/${username}?start=ref_${(p as any).referral_code}` : `(الكود) ${(p as any).referral_code}`;
+  await sendMessage(
+    chatId,
+    `🎁 <b>نقاطك</b>\n\n` +
+      `💎 الرصيد: <b>${(p as any).points || 0}</b> نقطة\n` +
+      `🔗 رمز الإحالة: <code>${(p as any).referral_code}</code>\n\n` +
+      `شارك رابطك مع أصدقائك واحصل على <b>${ppr}</b> نقطة لكل صديق جديد:\n\n<code>${link}</code>`,
+  );
+}
+
+async function showHowTo(chatId: number) {
+  const txt = await getSetting('how_to_use', 'لم يتم ضبط الشرح بعد.');
+  await sendMessage(chatId, txt);
+}
+
+async function showSupport(chatId: number) {
+  const u = await getSetting('support_username', 'xnxnff');
+  await sendMessage(
+    chatId,
+    `<b>🆘 الدعم الفني</b>\n\nللتواصل مع الدعم:\n👤 @${esc(u)}\n\nأو أرسل رسالتك وسيتم الرد قريباً.`,
+  );
 }
 
 // ============ Order Flow ============
@@ -225,7 +347,7 @@ async function handleText(msg: any) {
             (o.expires_at
               ? `📅 ينتهي: ${new Date(o.expires_at).toLocaleDateString('ar-IQ')}\n\n`
               : '') +
-            `شكراً لاختيارك متجر شبكتي 🌐`,
+            `للتعرف على طريقة الاستخدام اضغط زر «❓ كيف أستخدم الكود».\n\nشكراً لاختيارك متجر شبكتي 🌐`,
         );
       }
       await sendMessage(chatId, '✅ تم تسليم الكود للزبون.');
@@ -261,20 +383,27 @@ async function handleText(msg: any) {
   }
 
   // ===== Main commands / keyboard =====
-  if (text === '/start' || text === '/menu') {
+  if (text.startsWith('/start')) {
+    await clearState(userId, chatId);
+    await getOrCreatePoints(userId);
+    // Handle referral payload: /start ref_XXXX
+    const parts = text.split(/\s+/);
+    if (parts[1] && parts[1].startsWith('ref_')) {
+      await applyReferral(userId, parts[1].slice(4));
+    }
+    await showMain(chatId, userId, msg.from.first_name);
+    return;
+  }
+  if (text === '/menu') {
     await clearState(userId, chatId);
     await showMain(chatId, userId, msg.from.first_name);
     return;
   }
   if (text === '🛍 الباقات' || text === '/packages') return showPackages(chatId);
   if (text === '📦 طلباتي' || text === '/orders') return showMyOrders(userId, chatId);
-  if (text === '🆘 الدعم' || text === '/support') {
-    await sendMessage(
-      chatId,
-      `<b>🆘 الدعم الفني</b>\n\nللتواصل مع الدعم:\n👤 @shabkty_support\n\nأو أرسل رسالتك وسيتم الرد قريباً.`,
-    );
-    return;
-  }
+  if (text === '🎁 نقاطي' || text === '/points') return showPoints(userId, chatId);
+  if (text === '❓ كيف أستخدم الكود' || text === '/howto') return showHowTo(chatId);
+  if (text === '🆘 الدعم' || text === '/support') return showSupport(chatId);
   if (userId === ADMIN() && (text === '/admin' || text === '👑 لوحة الأدمن')) {
     return showAdminPanel(chatId);
   }
@@ -430,6 +559,8 @@ async function handleCallback(cb: any) {
   if (data === 'a:pending') return adminPendingOrders(chatId);
   if (data === 'a:users') return adminListUsers(chatId);
   if (data === 'a:stats') return adminStats(chatId);
+  if (data === 'a:settings') return adminSettingsMenu(chatId);
+  if (data === 'a:points') return adminPointsMenu(chatId);
   if (data === 'a:bcast') {
     await setState(userId, chatId, { step: 'a_bcast_text' });
     await sendMessage(chatId, '📢 أرسل نص الإعلان الذي تريد بثّه لجميع المستخدمين:');
@@ -469,6 +600,30 @@ async function handleCallback(cb: any) {
     await clearState(userId, chatId);
     await sendMessage(chatId, '✖️ تم الإلغاء.');
     return showAdminPanel(chatId);
+  }
+
+  // Settings edits
+  if (data.startsWith('set:edit:')) {
+    const key = data.slice(9);
+    await setState(userId, chatId, { step: 'a_set_value', set_key: key });
+    const labels: any = {
+      support_username: 'اسم مستخدم الدعم (بدون @)',
+      points_per_referral: 'عدد النقاط لكل صديق',
+      how_to_use: 'نص شرح كيفية استخدام الكود',
+    };
+    const cur = await getSetting(key, '');
+    await sendMessage(
+      chatId,
+      `✏️ القيمة الحالية لـ <b>${labels[key] || key}</b>:\n<code>${esc(cur)}</code>\n\nأرسل القيمة الجديدة:`,
+    );
+    return;
+  }
+
+  // Points admin
+  if (data === 'a:pts:add') {
+    await setState(userId, chatId, { step: 'a_pts_uid' });
+    await sendMessage(chatId, '🎁 أرسل <b>ID تلغرام الزبون</b>:');
+    return;
   }
 }
 
@@ -577,7 +732,6 @@ async function adminStats(chatId: number) {
     sb().from('telegram_sessions').select('*', { count: 'exact', head: true }),
     sb().from('packages').select('*', { count: 'exact', head: true }),
   ]);
-  // Revenue from approved orders
   const { data: appData } = await sb()
     .from('orders')
     .select('packages(price_iqd)')
@@ -597,6 +751,53 @@ async function adminStats(chatId: number) {
       `❌ مرفوضة: <b>${rej.count || 0}</b>\n\n` +
       `💰 إجمالي الإيرادات: <b>${fmtIQD(revenue)}</b>`,
     { reply_markup: { inline_keyboard: [[{ text: '⬅️ رجوع', callback_data: 'a:home' }]] } },
+  );
+}
+
+async function adminSettingsMenu(chatId: number) {
+  const sup = await getSetting('support_username', 'xnxnff');
+  const ppr = await getSetting('points_per_referral', '10');
+  const howto = await getSetting('how_to_use', '');
+  await sendMessage(
+    chatId,
+    `⚙️ <b>إعدادات البوت</b>\n\n` +
+      `👤 الدعم: <b>@${esc(sup)}</b>\n` +
+      `🎁 نقاط لكل إحالة: <b>${esc(ppr)}</b>\n` +
+      `❓ شرح الاستخدام:\n${esc(howto).slice(0, 200)}${howto.length > 200 ? '…' : ''}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ يوزر الدعم', callback_data: 'set:edit:support_username' }],
+          [{ text: '✏️ نقاط الإحالة', callback_data: 'set:edit:points_per_referral' }],
+          [{ text: '✏️ شرح الاستخدام', callback_data: 'set:edit:how_to_use' }],
+          [{ text: '⬅️ رجوع', callback_data: 'a:home' }],
+        ],
+      },
+    },
+  );
+}
+
+async function adminPointsMenu(chatId: number) {
+  const { data: top } = await sb()
+    .from('user_points')
+    .select('telegram_user_id, points, referral_code')
+    .order('points', { ascending: false })
+    .limit(10);
+  const list = (top || []) as any[];
+  const lines = list.length
+    ? list.map((u, i) => `${i + 1}. <code>${u.telegram_user_id}</code> — ${u.points} نقطة (${u.referral_code})`).join('\n')
+    : 'لا يوجد بعد.';
+  await sendMessage(
+    chatId,
+    `🎁 <b>إدارة النقاط</b>\n\nأعلى المستخدمين:\n${lines}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➕ إضافة نقاط لزبون', callback_data: 'a:pts:add' }],
+          [{ text: '⬅️ رجوع', callback_data: 'a:home' }],
+        ],
+      },
+    },
   );
 }
 
@@ -643,6 +844,40 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
       },
     );
     return;
+  }
+
+  // Settings value
+  if (state.step === 'a_set_value' && state.set_key) {
+    await setSetting(state.set_key, text);
+    await clearState(userId, chatId);
+    await sendMessage(chatId, '✅ تم الحفظ.');
+    return adminSettingsMenu(chatId);
+  }
+
+  // Add points - step 1: get user id
+  if (state.step === 'a_pts_uid') {
+    const uid = parseInt(text.replace(/\D/g, ''), 10);
+    if (!uid) {
+      await sendMessage(chatId, '⚠️ ID غير صحيح. أعد الإرسال:');
+      return;
+    }
+    await setState(userId, chatId, { step: 'a_pts_amount', pts_uid: uid });
+    await sendMessage(chatId, '💎 أرسل عدد النقاط (يمكن أن يكون سالباً للخصم):');
+    return;
+  }
+  if (state.step === 'a_pts_amount') {
+    const amt = parseInt(text.replace(/[^\d-]/g, ''), 10);
+    if (!amt) {
+      await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
+      return;
+    }
+    const uid = state.pts_uid;
+    const p = await getOrCreatePoints(uid);
+    const newPts = Math.max(0, ((p as any).points || 0) + amt);
+    await sb().from('user_points').update({ points: newPts }).eq('telegram_user_id', uid);
+    await clearState(userId, chatId);
+    await sendMessage(chatId, `✅ تم. الرصيد الجديد: <b>${newPts}</b> نقطة.`);
+    return adminPointsMenu(chatId);
   }
 
   // New package wizard
