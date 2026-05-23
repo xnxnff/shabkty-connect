@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      bot_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          value: string | null
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value?: string | null
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: string | null
+        }
+        Relationships: []
+      }
       categories: {
         Row: {
           created_at: string
@@ -237,6 +255,30 @@ export type Database = {
           state?: Json
           telegram_user_id?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      user_points: {
+        Row: {
+          created_at: string
+          points: number
+          referral_code: string
+          referred_by: number | null
+          telegram_user_id: number
+        }
+        Insert: {
+          created_at?: string
+          points?: number
+          referral_code: string
+          referred_by?: number | null
+          telegram_user_id: number
+        }
+        Update: {
+          created_at?: string
+          points?: number
+          referral_code?: string
+          referred_by?: number | null
+          telegram_user_id?: number
         }
         Relationships: []
       }
