@@ -67,6 +67,8 @@ const sendMessage = (chat_id: number, text: string, extra: any = {}) =>
   tg('sendMessage', { chat_id, text, parse_mode: 'HTML', ...extra });
 const sendPhoto = (chat_id: number, photo: string, caption: string, extra: any = {}) =>
   tg('sendPhoto', { chat_id, photo, caption, parse_mode: 'HTML', ...extra });
+const sendVideo = (chat_id: number, video: string, caption: string, extra: any = {}) =>
+  tg('sendVideo', { chat_id, video, caption, parse_mode: 'HTML', ...extra });
 const answerCb = (id: string, text?: string) =>
   tg('answerCallbackQuery', { callback_query_id: id, text });
 
