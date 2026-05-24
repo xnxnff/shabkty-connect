@@ -786,7 +786,9 @@ async function adminSettingsMenu(chatId: number) {
         inline_keyboard: [
           [{ text: '✏️ يوزر الدعم', callback_data: 'set:edit:support_username' }],
           [{ text: '✏️ نقاط الإحالة', callback_data: 'set:edit:points_per_referral' }],
-          [{ text: '✏️ شرح الاستخدام', callback_data: 'set:edit:how_to_use' }],
+          [{ text: '✏️ نص شرح الاستخدام', callback_data: 'set:edit:how_to_use' }],
+          [{ text: '🎬 رفع فيديو الشرح', callback_data: 'set:howto_video' }],
+          [{ text: '🗑 حذف فيديو الشرح', callback_data: 'set:howto_video_del' }],
           [{ text: '⬅️ رجوع', callback_data: 'a:home' }],
         ],
       },
