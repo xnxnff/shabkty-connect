@@ -231,8 +231,11 @@ async function showPackages(chatId: number) {
       `<b>${esc(p.name)}</b>\n` +
       (p.description ? `${esc(p.description)}\n` : '') +
       `\n💰 السعر: <b>${fmtIQD(p.price_iqd)}</b>\n` +
+      (p.price_points ? `💎 أو بـ <b>${p.price_points}</b> نقطة\n` : '') +
       `📅 المدة: <b>${p.duration_days} يوم</b>`;
-    const kb = { inline_keyboard: [[{ text: '🛒 اطلب الآن', callback_data: `buy:${p.id}` }]] };
+    const row: any[] = [{ text: '🛒 اطلب الآن', callback_data: `buy:${p.id}` }];
+    if (p.price_points) row.push({ text: `💎 شراء بالنقاط (${p.price_points})`, callback_data: `pbuy:${p.id}` });
+    const kb = { inline_keyboard: [row] };
     if (p.image_url) {
       await sendPhoto(chatId, p.image_url, caption, { reply_markup: kb });
     } else {
