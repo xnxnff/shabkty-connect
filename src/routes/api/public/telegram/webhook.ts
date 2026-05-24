@@ -299,7 +299,12 @@ async function showPoints(userId: number, chatId: number) {
 
 async function showHowTo(chatId: number) {
   const txt = await getSetting('how_to_use', 'لم يتم ضبط الشرح بعد.');
-  await sendMessage(chatId, txt);
+  const vid = await getSetting('how_to_video_file_id', '');
+  if (vid) {
+    await sendVideo(chatId, vid, txt);
+  } else {
+    await sendMessage(chatId, txt);
+  }
 }
 
 async function showSupport(chatId: number) {
