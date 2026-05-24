@@ -1049,7 +1049,24 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
   }
   if (state.step === 'a_pkg_img') {
     const image_url = text === '-' ? null : text;
-    const draft = { ...state.draft, image_url, is_active: true };
+    await setState(userId, chatId, {
+      step: 'a_pkg_points',
+      draft: { ...state.draft, image_url },
+    });
+    await sendMessage(chatId, '💎 أرسل <b>سعر الباقة بالنقاط</b> (للسماح بالشراء بالنقاط)، أو - للتخطي:');
+    return;
+  }
+  if (state.step === 'a_pkg_points') {
+    let price_points: number | null = null;
+    if (text !== '-') {
+      const v = parseInt(text.replace(/\D/g, ''), 10);
+      if (!v || v <= 0) {
+        await sendMessage(chatId, '⚠️ قيمة غير صحيحة. أرسل رقم أو - للتخطي:');
+        return;
+      }
+      price_points = v;
+    }
+    const draft = { ...state.draft, price_points, is_active: true };
     const { error } = await sb().from('packages').insert(draft);
     await clearState(userId, chatId);
     if (error) {
@@ -1061,7 +1078,7 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
   }
 
   // Edit single field
-  const editMatch = state.step?.match(/^a_pkg_edit_(name|desc|price|dur|img)$/);
+  const editMatch = state.step?.match(/^a_pkg_edit_(name|desc|price|dur|img|points)$/);
   if (editMatch) {
     const field = editMatch[1];
     const id = state.edit_id;
@@ -1069,7 +1086,17 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
     if (field === 'name') patch.name = text;
     else if (field === 'desc') patch.description = text === '-' ? null : text;
     else if (field === 'img') patch.image_url = text === '-' ? null : text;
-    else if (field === 'price') {
+    else if (field === 'points') {
+      if (text === '-' || text === '0') patch.price_points = null;
+      else {
+        const v = parseInt(text.replace(/\D/g, ''), 10);
+        if (!v) {
+          await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
+          return;
+        }
+        patch.price_points = v;
+      }
+    } else if (field === 'price') {
       const v = parseInt(text.replace(/\D/g, ''), 10);
       if (!v) {
         await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
