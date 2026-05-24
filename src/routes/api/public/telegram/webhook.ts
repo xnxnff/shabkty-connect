@@ -535,6 +535,23 @@ async function handlePhoto(msg: any) {
   }
 }
 
+async function handleVideo(msg: any) {
+  const userId = msg.from.id;
+  const chatId = msg.chat.id;
+  if (userId !== ADMIN()) return;
+  const state = await getState(userId);
+  if (state.step !== 'a_howto_video') return;
+  const fileId = msg.video?.file_id;
+  if (!fileId) {
+    await sendMessage(chatId, '⚠️ لم يتم استلام الفيديو.');
+    return;
+  }
+  await setSetting('how_to_video_file_id', fileId);
+  await clearState(userId, chatId);
+  await sendMessage(chatId, '✅ تم حفظ فيديو الشرح. سيراه الزبائن عند الضغط على «❓ كيف أستخدم الكود».');
+  return adminSettingsMenu(chatId);
+}
+
 async function handleCallback(cb: any) {
   const data: string = cb.data || '';
   const userId = cb.from.id;
