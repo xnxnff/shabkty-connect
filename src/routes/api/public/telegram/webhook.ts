@@ -623,7 +623,7 @@ async function handleCallback(cb: any) {
   if (data.startsWith('pkg:edit:')) {
     const [, , , field, id] = data.split(':');
     await setState(userId, chatId, { step: `a_pkg_edit_${field}`, edit_id: id });
-    const labels: any = { name: 'الاسم', desc: 'الوصف', price: 'السعر (د.ع)', dur: 'المدة (أيام)', img: 'رابط الصورة' };
+    const labels: any = { name: 'الاسم', desc: 'الوصف', price: 'السعر (د.ع)', dur: 'المدة (أيام)', img: 'رابط الصورة', points: 'السعر بالنقاط (0 أو - للإلغاء)' };
     await sendMessage(chatId, `✏️ أرسل القيمة الجديدة لـ <b>${labels[field]}</b>:`);
     return;
   }
