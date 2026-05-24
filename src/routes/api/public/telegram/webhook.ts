@@ -544,6 +544,13 @@ async function handleCallback(cb: any) {
   if (data.startsWith('buy:')) {
     return startOrder(userId, chatId, data.slice(4));
   }
+  if (data.startsWith('pbuy:')) {
+    return startPointsOrder(userId, chatId, data.slice(5));
+  }
+  if (data.startsWith('pbc:')) {
+    // pbc:<pkgId> confirm points purchase
+    return confirmPointsOrder(userId, chatId, data.slice(4));
+  }
 
   if (userId !== ADMIN()) {
     await sendMessage(chatId, '⛔ هذا الإجراء للأدمن فقط.');
