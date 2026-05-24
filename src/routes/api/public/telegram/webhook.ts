@@ -1097,7 +1097,8 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
           const update = await request.json();
           if (update.message) {
             const m = update.message;
-            if (m.photo) await handlePhoto(m);
+            if (m.video) await handleVideo(m);
+            else if (m.photo) await handlePhoto(m);
             else if (m.text) await handleText(m);
           } else if (update.callback_query) {
             await handleCallback(update.callback_query);
