@@ -642,6 +642,102 @@ async function handleCallback(cb: any) {
     await sendMessage(chatId, '🎁 أرسل <b>ID تلغرام الزبون</b>:');
     return;
   }
+
+  // How-to video
+  if (data === 'set:howto_video') {
+    await setState(userId, chatId, { step: 'a_howto_video' });
+    await sendMessage(chatId, '🎬 أرسل الآن <b>فيديو الشرح</b> (ارفعه كفيديو مباشرة):');
+    return;
+  }
+  if (data === 'set:howto_video_del') {
+    await setSetting('how_to_video_file_id', '');
+    await sendMessage(chatId, '✅ تم حذف فيديو الشرح.');
+    return adminSettingsMenu(chatId);
+  }
+}
+
+// ============ Points purchase ============
+async function startPointsOrder(userId: number, chatId: number, pkgId: string) {
+  const { data: pkg } = await sb().from('packages').select('*').eq('id', pkgId).maybeSingle();
+  const p: any = pkg;
+  if (!p || !p.price_points) {
+    await sendMessage(chatId, '⚠️ هذه الباقة غير متاحة للشراء بالنقاط.');
+    return;
+  }
+  const up = await getOrCreatePoints(userId);
+  const have = (up as any).points || 0;
+  if (have < p.price_points) {
+    await sendMessage(chatId, `⚠️ رصيدك غير كافٍ.\n💎 رصيدك: <b>${have}</b>\n💎 المطلوب: <b>${p.price_points}</b>\n\nاجمع نقاطاً عبر دعوة الأصدقاء من قسم 🎁 نقاطي.`);
+    return;
+  }
+  await sendMessage(
+    chatId,
+    `🛒 <b>${esc(p.name)}</b>\n💎 السعر: <b>${p.price_points}</b> نقطة\n💎 رصيدك: <b>${have}</b>\n\nهل تريد تأكيد الشراء؟`,
+    { reply_markup: { inline_keyboard: [[
+      { text: '✅ تأكيد الشراء', callback_data: `pbc:${pkgId}` },
+      { text: '✖️ إلغاء', callback_data: 'a:home' },
+    ]] } },
+  );
+}
+
+async function confirmPointsOrder(userId: number, chatId: number, pkgId: string) {
+  const { data: pkg } = await sb().from('packages').select('*').eq('id', pkgId).maybeSingle();
+  const p: any = pkg;
+  if (!p || !p.price_points) {
+    await sendMessage(chatId, '⚠️ غير متاحة.');
+    return;
+  }
+  const up = await getOrCreatePoints(userId);
+  const have = (up as any).points || 0;
+  if (have < p.price_points) {
+    await sendMessage(chatId, '⚠️ رصيدك غير كافٍ.');
+    return;
+  }
+  // Deduct points first
+  const newPts = have - p.price_points;
+  await sb().from('user_points').update({ points: newPts }).eq('telegram_user_id', userId);
+
+  const code = genCode();
+  const fullName = 'دفع بالنقاط';
+  const { data: ins, error } = await sb()
+    .from('orders')
+    .insert({
+      package_id: pkgId,
+      full_name: fullName,
+      verification_code: code,
+      payment_screenshot_url: 'POINTS',
+      telegram_user_id: userId,
+      telegram_chat_id: chatId,
+      user_id: null,
+      admin_note: `دفع بالنقاط — ${p.price_points} نقطة`,
+    })
+    .select()
+    .single();
+  if (error) {
+    // refund
+    await sb().from('user_points').update({ points: have }).eq('telegram_user_id', userId);
+    await sendMessage(chatId, '⚠️ فشل إنشاء الطلب: ' + error.message);
+    return;
+  }
+  await sendMessage(
+    chatId,
+    `✅ <b>تم استلام طلبك (دفع بالنقاط)!</b>\n\n` +
+      `🔖 كود التحقق:\n<code>${code}</code>\n💎 خُصم: <b>${p.price_points}</b> نقطة\n💎 رصيدك الجديد: <b>${newPts}</b>\n\n⏳ سيتم تسليم كود الاشتراك خلال دقائق.`,
+    mainMenu(userId),
+  );
+  // Notify admin
+  const caption =
+    `🆕 <b>طلب جديد (نقاط 💎)</b>\n\n` +
+    `🆔 تلغرام: <code>${userId}</code>\n` +
+    `📦 الباقة: <b>${esc(p.name)}</b>\n` +
+    `💎 الدفع: <b>${p.price_points} نقطة</b>\n` +
+    `🔖 كود التحقق: <code>${code}</code>`;
+  await sendMessage(ADMIN(), caption, {
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ قبول', callback_data: `appr:${(ins as any).id}` },
+      { text: '❌ رفض', callback_data: `rej:${(ins as any).id}` },
+    ]] },
+  });
 }
 
 // ============ Admin helpers ============
