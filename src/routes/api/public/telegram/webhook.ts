@@ -782,6 +782,7 @@ async function adminViewPackage(chatId: number, id: string) {
     `📦 <b>${esc(pkg.name)}</b>\n` +
     `الحالة: ${pkg.is_active ? '🟢 مفعّلة' : '⚪️ متوقفة'}\n` +
     `💰 ${fmtIQD(pkg.price_iqd)}\n` +
+    (pkg.price_points ? `💎 سعر النقاط: ${pkg.price_points}\n` : '💎 سعر النقاط: — (غير مفعّل)\n') +
     `📅 ${pkg.duration_days} يوم\n` +
     (pkg.description ? `📝 ${esc(pkg.description)}\n` : '') +
     (pkg.image_url ? `🖼 ${esc(pkg.image_url)}\n` : '');
@@ -796,7 +797,10 @@ async function adminViewPackage(chatId: number, id: string) {
           { text: '📅 المدة', callback_data: `pkg:edit:f:dur:${id}` },
           { text: '📝 الوصف', callback_data: `pkg:edit:f:desc:${id}` },
         ],
-        [{ text: '🖼 الصورة', callback_data: `pkg:edit:f:img:${id}` }],
+        [
+          { text: '🖼 الصورة', callback_data: `pkg:edit:f:img:${id}` },
+          { text: '💎 سعر النقاط', callback_data: `pkg:edit:f:points:${id}` },
+        ],
         [{ text: pkg.is_active ? '⏸ إيقاف' : '▶️ تفعيل', callback_data: `pkg:toggle:${id}` }],
         [{ text: '🗑 حذف', callback_data: `pkg:del:${id}` }],
         [{ text: '⬅️ رجوع', callback_data: 'a:pkgs' }],
