@@ -153,6 +153,7 @@ export type Database = {
           is_active: boolean
           name: string
           price_iqd: number
+          price_points: number | null
           sort_order: number
         }
         Insert: {
@@ -165,6 +166,7 @@ export type Database = {
           is_active?: boolean
           name: string
           price_iqd: number
+          price_points?: number | null
           sort_order?: number
         }
         Update: {
@@ -177,6 +179,7 @@ export type Database = {
           is_active?: boolean
           name?: string
           price_iqd?: number
+          price_points?: number | null
           sort_order?: number
         }
         Relationships: [

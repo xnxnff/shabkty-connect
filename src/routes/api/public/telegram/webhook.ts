@@ -67,6 +67,8 @@ const sendMessage = (chat_id: number, text: string, extra: any = {}) =>
   tg('sendMessage', { chat_id, text, parse_mode: 'HTML', ...extra });
 const sendPhoto = (chat_id: number, photo: string, caption: string, extra: any = {}) =>
   tg('sendPhoto', { chat_id, photo, caption, parse_mode: 'HTML', ...extra });
+const sendVideo = (chat_id: number, video: string, caption: string, extra: any = {}) =>
+  tg('sendVideo', { chat_id, video, caption, parse_mode: 'HTML', ...extra });
 const answerCb = (id: string, text?: string) =>
   tg('answerCallbackQuery', { callback_query_id: id, text });
 
@@ -229,8 +231,11 @@ async function showPackages(chatId: number) {
       `<b>${esc(p.name)}</b>\n` +
       (p.description ? `${esc(p.description)}\n` : '') +
       `\n💰 السعر: <b>${fmtIQD(p.price_iqd)}</b>\n` +
+      (p.price_points ? `💎 أو بـ <b>${p.price_points}</b> نقطة\n` : '') +
       `📅 المدة: <b>${p.duration_days} يوم</b>`;
-    const kb = { inline_keyboard: [[{ text: '🛒 اطلب الآن', callback_data: `buy:${p.id}` }]] };
+    const row: any[] = [{ text: '🛒 اطلب الآن', callback_data: `buy:${p.id}` }];
+    if (p.price_points) row.push({ text: `💎 شراء بالنقاط (${p.price_points})`, callback_data: `pbuy:${p.id}` });
+    const kb = { inline_keyboard: [row] };
     if (p.image_url) {
       await sendPhoto(chatId, p.image_url, caption, { reply_markup: kb });
     } else {
@@ -294,7 +299,12 @@ async function showPoints(userId: number, chatId: number) {
 
 async function showHowTo(chatId: number) {
   const txt = await getSetting('how_to_use', 'لم يتم ضبط الشرح بعد.');
-  await sendMessage(chatId, txt);
+  const vid = await getSetting('how_to_video_file_id', '');
+  if (vid) {
+    await sendVideo(chatId, vid, txt);
+  } else {
+    await sendMessage(chatId, txt);
+  }
 }
 
 async function showSupport(chatId: number) {
@@ -525,6 +535,23 @@ async function handlePhoto(msg: any) {
   }
 }
 
+async function handleVideo(msg: any) {
+  const userId = msg.from.id;
+  const chatId = msg.chat.id;
+  if (userId !== ADMIN()) return;
+  const state = await getState(userId);
+  if (state.step !== 'a_howto_video') return;
+  const fileId = msg.video?.file_id;
+  if (!fileId) {
+    await sendMessage(chatId, '⚠️ لم يتم استلام الفيديو.');
+    return;
+  }
+  await setSetting('how_to_video_file_id', fileId);
+  await clearState(userId, chatId);
+  await sendMessage(chatId, '✅ تم حفظ فيديو الشرح. سيراه الزبائن عند الضغط على «❓ كيف أستخدم الكود».');
+  return adminSettingsMenu(chatId);
+}
+
 async function handleCallback(cb: any) {
   const data: string = cb.data || '';
   const userId = cb.from.id;
@@ -533,6 +560,13 @@ async function handleCallback(cb: any) {
 
   if (data.startsWith('buy:')) {
     return startOrder(userId, chatId, data.slice(4));
+  }
+  if (data.startsWith('pbuy:')) {
+    return startPointsOrder(userId, chatId, data.slice(5));
+  }
+  if (data.startsWith('pbc:')) {
+    // pbc:<pkgId> confirm points purchase
+    return confirmPointsOrder(userId, chatId, data.slice(4));
   }
 
   if (userId !== ADMIN()) {
@@ -589,7 +623,7 @@ async function handleCallback(cb: any) {
   if (data.startsWith('pkg:edit:')) {
     const [, , , field, id] = data.split(':');
     await setState(userId, chatId, { step: `a_pkg_edit_${field}`, edit_id: id });
-    const labels: any = { name: 'الاسم', desc: 'الوصف', price: 'السعر (د.ع)', dur: 'المدة (أيام)', img: 'رابط الصورة' };
+    const labels: any = { name: 'الاسم', desc: 'الوصف', price: 'السعر (د.ع)', dur: 'المدة (أيام)', img: 'رابط الصورة', points: 'السعر بالنقاط (0 أو - للإلغاء)' };
     await sendMessage(chatId, `✏️ أرسل القيمة الجديدة لـ <b>${labels[field]}</b>:`);
     return;
   }
@@ -625,6 +659,102 @@ async function handleCallback(cb: any) {
     await sendMessage(chatId, '🎁 أرسل <b>ID تلغرام الزبون</b>:');
     return;
   }
+
+  // How-to video
+  if (data === 'set:howto_video') {
+    await setState(userId, chatId, { step: 'a_howto_video' });
+    await sendMessage(chatId, '🎬 أرسل الآن <b>فيديو الشرح</b> (ارفعه كفيديو مباشرة):');
+    return;
+  }
+  if (data === 'set:howto_video_del') {
+    await setSetting('how_to_video_file_id', '');
+    await sendMessage(chatId, '✅ تم حذف فيديو الشرح.');
+    return adminSettingsMenu(chatId);
+  }
+}
+
+// ============ Points purchase ============
+async function startPointsOrder(userId: number, chatId: number, pkgId: string) {
+  const { data: pkg } = await sb().from('packages').select('*').eq('id', pkgId).maybeSingle();
+  const p: any = pkg;
+  if (!p || !p.price_points) {
+    await sendMessage(chatId, '⚠️ هذه الباقة غير متاحة للشراء بالنقاط.');
+    return;
+  }
+  const up = await getOrCreatePoints(userId);
+  const have = (up as any).points || 0;
+  if (have < p.price_points) {
+    await sendMessage(chatId, `⚠️ رصيدك غير كافٍ.\n💎 رصيدك: <b>${have}</b>\n💎 المطلوب: <b>${p.price_points}</b>\n\nاجمع نقاطاً عبر دعوة الأصدقاء من قسم 🎁 نقاطي.`);
+    return;
+  }
+  await sendMessage(
+    chatId,
+    `🛒 <b>${esc(p.name)}</b>\n💎 السعر: <b>${p.price_points}</b> نقطة\n💎 رصيدك: <b>${have}</b>\n\nهل تريد تأكيد الشراء؟`,
+    { reply_markup: { inline_keyboard: [[
+      { text: '✅ تأكيد الشراء', callback_data: `pbc:${pkgId}` },
+      { text: '✖️ إلغاء', callback_data: 'a:home' },
+    ]] } },
+  );
+}
+
+async function confirmPointsOrder(userId: number, chatId: number, pkgId: string) {
+  const { data: pkg } = await sb().from('packages').select('*').eq('id', pkgId).maybeSingle();
+  const p: any = pkg;
+  if (!p || !p.price_points) {
+    await sendMessage(chatId, '⚠️ غير متاحة.');
+    return;
+  }
+  const up = await getOrCreatePoints(userId);
+  const have = (up as any).points || 0;
+  if (have < p.price_points) {
+    await sendMessage(chatId, '⚠️ رصيدك غير كافٍ.');
+    return;
+  }
+  // Deduct points first
+  const newPts = have - p.price_points;
+  await sb().from('user_points').update({ points: newPts }).eq('telegram_user_id', userId);
+
+  const code = genCode();
+  const fullName = 'دفع بالنقاط';
+  const { data: ins, error } = await sb()
+    .from('orders')
+    .insert({
+      package_id: pkgId,
+      full_name: fullName,
+      verification_code: code,
+      payment_screenshot_url: 'POINTS',
+      telegram_user_id: userId,
+      telegram_chat_id: chatId,
+      user_id: null,
+      admin_note: `دفع بالنقاط — ${p.price_points} نقطة`,
+    })
+    .select()
+    .single();
+  if (error) {
+    // refund
+    await sb().from('user_points').update({ points: have }).eq('telegram_user_id', userId);
+    await sendMessage(chatId, '⚠️ فشل إنشاء الطلب: ' + error.message);
+    return;
+  }
+  await sendMessage(
+    chatId,
+    `✅ <b>تم استلام طلبك (دفع بالنقاط)!</b>\n\n` +
+      `🔖 كود التحقق:\n<code>${code}</code>\n💎 خُصم: <b>${p.price_points}</b> نقطة\n💎 رصيدك الجديد: <b>${newPts}</b>\n\n⏳ سيتم تسليم كود الاشتراك خلال دقائق.`,
+    mainMenu(userId),
+  );
+  // Notify admin
+  const caption =
+    `🆕 <b>طلب جديد (نقاط 💎)</b>\n\n` +
+    `🆔 تلغرام: <code>${userId}</code>\n` +
+    `📦 الباقة: <b>${esc(p.name)}</b>\n` +
+    `💎 الدفع: <b>${p.price_points} نقطة</b>\n` +
+    `🔖 كود التحقق: <code>${code}</code>`;
+  await sendMessage(ADMIN(), caption, {
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ قبول', callback_data: `appr:${(ins as any).id}` },
+      { text: '❌ رفض', callback_data: `rej:${(ins as any).id}` },
+    ]] },
+  });
 }
 
 // ============ Admin helpers ============
@@ -652,6 +782,7 @@ async function adminViewPackage(chatId: number, id: string) {
     `📦 <b>${esc(pkg.name)}</b>\n` +
     `الحالة: ${pkg.is_active ? '🟢 مفعّلة' : '⚪️ متوقفة'}\n` +
     `💰 ${fmtIQD(pkg.price_iqd)}\n` +
+    (pkg.price_points ? `💎 سعر النقاط: ${pkg.price_points}\n` : '💎 سعر النقاط: — (غير مفعّل)\n') +
     `📅 ${pkg.duration_days} يوم\n` +
     (pkg.description ? `📝 ${esc(pkg.description)}\n` : '') +
     (pkg.image_url ? `🖼 ${esc(pkg.image_url)}\n` : '');
@@ -666,7 +797,10 @@ async function adminViewPackage(chatId: number, id: string) {
           { text: '📅 المدة', callback_data: `pkg:edit:f:dur:${id}` },
           { text: '📝 الوصف', callback_data: `pkg:edit:f:desc:${id}` },
         ],
-        [{ text: '🖼 الصورة', callback_data: `pkg:edit:f:img:${id}` }],
+        [
+          { text: '🖼 الصورة', callback_data: `pkg:edit:f:img:${id}` },
+          { text: '💎 سعر النقاط', callback_data: `pkg:edit:f:points:${id}` },
+        ],
         [{ text: pkg.is_active ? '⏸ إيقاف' : '▶️ تفعيل', callback_data: `pkg:toggle:${id}` }],
         [{ text: '🗑 حذف', callback_data: `pkg:del:${id}` }],
         [{ text: '⬅️ رجوع', callback_data: 'a:pkgs' }],
@@ -769,7 +903,9 @@ async function adminSettingsMenu(chatId: number) {
         inline_keyboard: [
           [{ text: '✏️ يوزر الدعم', callback_data: 'set:edit:support_username' }],
           [{ text: '✏️ نقاط الإحالة', callback_data: 'set:edit:points_per_referral' }],
-          [{ text: '✏️ شرح الاستخدام', callback_data: 'set:edit:how_to_use' }],
+          [{ text: '✏️ نص شرح الاستخدام', callback_data: 'set:edit:how_to_use' }],
+          [{ text: '🎬 رفع فيديو الشرح', callback_data: 'set:howto_video' }],
+          [{ text: '🗑 حذف فيديو الشرح', callback_data: 'set:howto_video_del' }],
           [{ text: '⬅️ رجوع', callback_data: 'a:home' }],
         ],
       },
@@ -917,7 +1053,24 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
   }
   if (state.step === 'a_pkg_img') {
     const image_url = text === '-' ? null : text;
-    const draft = { ...state.draft, image_url, is_active: true };
+    await setState(userId, chatId, {
+      step: 'a_pkg_points',
+      draft: { ...state.draft, image_url },
+    });
+    await sendMessage(chatId, '💎 أرسل <b>سعر الباقة بالنقاط</b> (للسماح بالشراء بالنقاط)، أو - للتخطي:');
+    return;
+  }
+  if (state.step === 'a_pkg_points') {
+    let price_points: number | null = null;
+    if (text !== '-') {
+      const v = parseInt(text.replace(/\D/g, ''), 10);
+      if (!v || v <= 0) {
+        await sendMessage(chatId, '⚠️ قيمة غير صحيحة. أرسل رقم أو - للتخطي:');
+        return;
+      }
+      price_points = v;
+    }
+    const draft = { ...state.draft, price_points, is_active: true };
     const { error } = await sb().from('packages').insert(draft);
     await clearState(userId, chatId);
     if (error) {
@@ -929,7 +1082,7 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
   }
 
   // Edit single field
-  const editMatch = state.step?.match(/^a_pkg_edit_(name|desc|price|dur|img)$/);
+  const editMatch = state.step?.match(/^a_pkg_edit_(name|desc|price|dur|img|points)$/);
   if (editMatch) {
     const field = editMatch[1];
     const id = state.edit_id;
@@ -937,7 +1090,17 @@ async function handleAdminText(chatId: number, userId: number, text: string, sta
     if (field === 'name') patch.name = text;
     else if (field === 'desc') patch.description = text === '-' ? null : text;
     else if (field === 'img') patch.image_url = text === '-' ? null : text;
-    else if (field === 'price') {
+    else if (field === 'points') {
+      if (text === '-' || text === '0') patch.price_points = null;
+      else {
+        const v = parseInt(text.replace(/\D/g, ''), 10);
+        if (!v) {
+          await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
+          return;
+        }
+        patch.price_points = v;
+      }
+    } else if (field === 'price') {
       const v = parseInt(text.replace(/\D/g, ''), 10);
       if (!v) {
         await sendMessage(chatId, '⚠️ قيمة غير صحيحة.');
@@ -982,7 +1145,8 @@ export const Route = createFileRoute('/api/public/telegram/webhook')({
           const update = await request.json();
           if (update.message) {
             const m = update.message;
-            if (m.photo) await handlePhoto(m);
+            if (m.video) await handleVideo(m);
+            else if (m.photo) await handlePhoto(m);
             else if (m.text) await handleText(m);
           } else if (update.callback_query) {
             await handleCallback(update.callback_query);
